@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 
 use move_bytecode_utils::module_cache::GetModule;
-use sui_json_rpc_types::{SuiObjectData, SuiObjectRef, SuiRawData};
+use sui_json_rpc_types::{SuiObjectData, SuiObjectRef, SuiRawData, SuiParsedData};
 use sui_types::base_types::{ObjectID, ObjectRef, ObjectType, SequenceNumber, SuiAddress};
 use sui_types::digests::TransactionDigest;
 use sui_types::move_package::MovePackage;
@@ -52,6 +52,7 @@ pub struct Object {
     pub has_public_transfer: bool,
     pub storage_rebate: i64,
     pub bcs: Vec<NamedBcsBytes>,
+    pub fields: Option<String>,
 }
 #[derive(SqlType, Debug, Clone)]
 #[diesel(sql_type = crate::schema::sql_types::BcsBytes)]
@@ -104,6 +105,7 @@ impl From<DeletedObject> for Object {
             has_public_transfer: o.has_public_transfer,
             storage_rebate: 0,
             bcs: vec![],
+            fields: None,
         }
     }
 }
@@ -145,6 +147,15 @@ impl Object {
                 ),
             };
 
+        let mut fields_json: Option<String> = None;
+        if o.content.is_some() {
+            let content = o.content.as_ref().unwrap();
+            fields_json = match content {
+                SuiParsedData::MoveObject(o) => Some(o.fields.clone().to_json_value().to_string()),
+                SuiParsedData::Package(_) => None,
+            };
+        }
+
         Object {
             epoch: epoch as i64,
             // NOTE: -1 as temp checkpoint for object updates from fast path,
@@ -168,6 +179,7 @@ impl Object {
             has_public_transfer,
             storage_rebate: o.storage_rebate.unwrap_or_default() as i64,
             bcs,
+            fields: fields_json,
         }
     }
 
@@ -342,7 +354,8 @@ pub fn compose_object_bulk_insert_update_query(objects: &[Object]) -> String {
             object_status = EXCLUDED.object_status,
             has_public_transfer = EXCLUDED.has_public_transfer,
             storage_rebate = EXCLUDED.storage_rebate,
-            bcs = EXCLUDED.bcs;",
+            bcs = EXCLUDED.bcs,
+            fields = EXCLUDED.fields;",
         insert_query
     );
     insert_update_query
@@ -381,6 +394,7 @@ pub fn compose_object_bulk_insert_query(objects: &[Object]) -> String {
                 obj.has_public_transfer,
                 obj.storage_rebate,
                 bcs_rows,
+                obj.fields.clone(),
             )
         })
         .collect::<Vec<_>>();
@@ -388,7 +402,7 @@ pub fn compose_object_bulk_insert_query(objects: &[Object]) -> String {
     let rows_query = rows
         .iter()
         .map(|row| {
-            let (epoch, checkpoint, object_id, version, object_digest, owner_type, owner_address, initial_shared_version, previous_transaction, object_type, object_status, has_public_transfer, storage_rebate, bcs_rows) = row;
+            let (epoch, checkpoint, object_id, version, object_digest, owner_type, owner_address, initial_shared_version, previous_transaction, object_type, object_status, has_public_transfer, storage_rebate, bcs_rows, fields) = row;
 
             let bcs_rows_query = bcs_rows
                 .iter()
@@ -406,7 +420,7 @@ pub fn compose_object_bulk_insert_query(objects: &[Object]) -> String {
             format!(
                 "ROW({}::BIGINT, {}::BIGINT, '{}'::address, {}::BIGINT, '{}'::base58digest, '{}'::owner_type, 
                      '{}'::address, {}::BIGINT, '{}'::base58digest, '{}'::VARCHAR, '{}'::object_status,
-                     {}::BOOLEAN, {}::BIGINT, ARRAY[{}]::bcs_bytes[])",
+                     {}::BOOLEAN, {}::BIGINT, ARRAY[{}]::bcs_bytes[], NULLIF('{}','')::TEXT)",
                 epoch,
                 checkpoint,
                 object_id,
@@ -427,6 +441,10 @@ pub fn compose_object_bulk_insert_query(objects: &[Object]) -> String {
                 has_public_transfer,
                 storage_rebate,
                 bcs_rows_query,
+                fields
+                    .as_ref()
+                    .map(|c| c.replace("'", "''").to_string())
+                    .unwrap_or_else(|| "".to_string()),
             )
         })
         .collect::<Vec<_>>()
@@ -435,10 +453,10 @@ pub fn compose_object_bulk_insert_query(objects: &[Object]) -> String {
     // Construct a prepared statement with placeholders for each row element
     let bulk_insert_query = format!(
         "INSERT INTO objects
-            (epoch, checkpoint, object_id, version, object_digest, owner_type, owner_address, initial_shared_version, previous_transaction, object_type, object_status, has_public_transfer, storage_rebate, bcs)
+            (epoch, checkpoint, object_id, version, object_digest, owner_type, owner_address, initial_shared_version, previous_transaction, object_type, object_status, has_public_transfer, storage_rebate, bcs, fields)
         SELECT (unnest_arr).*
         FROM unnest(ARRAY[{}]::record[]) 
-        AS unnest_arr(epoch BIGINT, checkpoint BIGINT, object_id address, version BIGINT, object_digest base58digest, owner_type owner_type, owner_address address, initial_shared_version BIGINT, previous_transaction base58digest, object_type VARCHAR, object_status object_status, has_public_transfer BOOLEAN, storage_rebate BIGINT, bcs bcs_bytes[]);",
+        AS unnest_arr(epoch BIGINT, checkpoint BIGINT, object_id address, version BIGINT, object_digest base58digest, owner_type owner_type, owner_address address, initial_shared_version BIGINT, previous_transaction base58digest, object_type VARCHAR, object_status object_status, has_public_transfer BOOLEAN, storage_rebate BIGINT, bcs bcs_bytes[], fields TEXT);",
         rows_query
     );
     bulk_insert_query

@@ -36,6 +36,7 @@ use crate::errors::IndexerError;
 use crate::metrics::IndexerMetrics;
 use crate::models::checkpoints::Checkpoint;
 use crate::models::epoch::{DBEpochInfo, SystemEpochInfoEvent};
+use crate::models::events::Event;
 use crate::models::objects::{DeletedObject, Object, ObjectStatus};
 use crate::models::packages::Package;
 use crate::models::transactions::Transaction;
@@ -555,7 +556,7 @@ where
             .flat_map(|tx| get_object_changes(&tx.effects))
             .collect::<Vec<_>>();
         let changed_objects =
-            fetch_changed_objects(self.http_client.clone(), object_changes).await?;
+            fetch_changed_objects(self.http_client.clone(), object_changes, self.config.store_parsed_content).await?;
         fn_object_guard.stop_and_record();
 
         Ok(CheckpointData {
@@ -586,7 +587,14 @@ where
         // Index events
         let events = transactions
             .iter()
-            .flat_map(|tx| tx.events.data.iter().map(move |event| event.clone().into()))
+            .flat_map(|tx| tx.events.data.iter()
+            .map(move |event| {
+                let mut to_event: Event= event.clone().into();
+                if self.config.store_parsed_content {
+                    to_event.parsed_json = Some(event.clone().parsed_json.to_string());
+                }
+                to_event
+            }))
             .collect::<Vec<_>>();
 
         // Index objects
@@ -855,6 +863,7 @@ pub fn get_object_changes(
 pub async fn fetch_changed_objects(
     http_client: HttpClient,
     object_changes: Vec<(ObjectID, SequenceNumber, ObjectStatus)>,
+    fetch_content: bool,
 ) -> Result<Vec<(ObjectStatus, SuiObjectData)>, IndexerError> {
     join_all(object_changes.chunks(MULTI_GET_CHUNK_SIZE).map(|objects| {
         let wanted_past_object_statuses: Vec<ObjectStatus> =
@@ -867,10 +876,12 @@ pub async fn fetch_changed_objects(
                 version: *seq_num,
             })
             .collect();
+        let mut options = SuiObjectDataOptions::bcs_lossless();
+        options.show_content = fetch_content;
         http_client
             .try_multi_get_past_objects(
                 wanted_past_object_request,
-                Some(SuiObjectDataOptions::bcs_lossless()),
+                Some(options),
             )
             .map(move |resp| (resp, wanted_past_object_statuses))
     }))

@@ -115,6 +115,7 @@ diesel::table! {
         event_type -> Text,
         event_time_ms -> Nullable<Int8>,
         event_bcs -> Bytea,
+        parsed_json -> Nullable<Text>,
     }
 }
 
@@ -163,6 +164,7 @@ diesel::table! {
         has_public_transfer -> Bool,
         storage_rebate -> Int8,
         bcs -> Array<Nullable<BcsBytes>>,
+        fields -> Nullable<Text>,
     }
 }
 
@@ -189,6 +191,7 @@ diesel::table! {
         has_public_transfer -> Bool,
         storage_rebate -> Int8,
         bcs -> Array<Nullable<BcsBytes>>,
+        fields -> Nullable<Text>,
     }
 }
 

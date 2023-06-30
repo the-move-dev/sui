@@ -136,6 +136,7 @@ impl PgIndexerStore {
                     objects_history::has_public_transfer,
                     objects_history::storage_rebate,
                     objects_history::bcs,
+                    objects_history::fields,
                 ))
                 .filter(objects_history::object_id.eq(object_id.to_string()))
                 .filter(objects_history::version.eq(version.value() as i64))
@@ -175,6 +176,7 @@ impl PgIndexerStore {
                     objects_history::has_public_transfer,
                     objects_history::storage_rebate,
                     objects_history::bcs,
+                    objects_history::fields,
                 ))
                 .filter(objects_history::object_id.eq(id.to_string()))
                 .filter(objects_history::version.le(version.value() as i64))
@@ -611,6 +613,7 @@ impl IndexerStore for PgIndexerStore {
                         objects_history::has_public_transfer,
                         objects_history::storage_rebate,
                         objects_history::bcs,
+                        objects_history::fields,
                     ))
                     .filter(objects_history::object_id.eq(object_id.to_string()))
                     .filter(objects_history::version.eq(version.value() as i64))

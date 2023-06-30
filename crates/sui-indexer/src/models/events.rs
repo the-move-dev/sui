@@ -30,6 +30,7 @@ pub struct Event {
     pub event_type: String,
     pub event_time_ms: Option<i64>,
     pub event_bcs: Vec<u8>,
+    pub parsed_json: Option<String>,
 }
 
 impl From<SuiEvent> for Event {
@@ -44,6 +45,10 @@ impl From<SuiEvent> for Event {
             event_type: se.type_.to_string(),
             event_time_ms: se.timestamp_ms.map(|t| t as i64),
             event_bcs: se.bcs,
+
+            // Don't set parsed_json by default. 
+            // It is being set by checkpoint handler if --store-parsed-content is provided.
+            parsed_json: None,
         }
     }
 }
